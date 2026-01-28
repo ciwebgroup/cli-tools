@@ -662,10 +662,8 @@ if [ -n "$WORKFLOW_RUN_ID" ] && [ "$WORKFLOW_RUN_ID" != "null" ]; then
   stuck_warning_shown=false
   
   while [ $wait_count -lt $max_wait ]; do
-    # Get detailed status including jobs
-    STATUS=$(gh run view "${WORKFLOW_RUN_ID}" --repo "${full_repo}" --json status,conclusion,jobs --jq '{status: .status, conclusion: .conclusion, jobs: [.jobs[]? | {name: .name, status: .status, conclusion: .conclusion}]}' 2>/dev/null)
-    
-    CURRENT_STATUS=$(echo "$STATUS" | jq -r '.status' 2>/dev/null)
+    # Get workflow status using gh's built-in jq (works without standalone jq)
+    CURRENT_STATUS=$(gh run view "${WORKFLOW_RUN_ID}" --repo "${full_repo}" --json status --jq '.status' 2>/dev/null)
     
     # Check if workflow is stuck waiting for a runner
     if [ "$CURRENT_STATUS" = "queued" ] || [ "$CURRENT_STATUS" = "in_progress" ]; then
@@ -707,7 +705,7 @@ if [ -n "$WORKFLOW_RUN_ID" ] && [ "$WORKFLOW_RUN_ID" != "null" ]; then
     fi
     
     if [ "$CURRENT_STATUS" = "completed" ]; then
-      CONCLUSION=$(echo "$STATUS" | jq -r '.conclusion' 2>/dev/null)
+      CONCLUSION=$(gh run view "${WORKFLOW_RUN_ID}" --repo "${full_repo}" --json conclusion --jq '.conclusion' 2>/dev/null)
       echo ""
       echo "✓ Workflow completed with status: ${CONCLUSION}"
       break
