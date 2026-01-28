@@ -774,41 +774,92 @@ echo "=============================================="
 
 cd "${clone_dir}"
 
-# Get the default branch name
+# First, ensure remote is set correctly
+if ! git remote get-url origin &> /dev/null; then
+  echo "Setting remote origin..."
+  git remote add origin "git@github.com:${full_repo}.git" 2>/dev/null || \
+    git remote set-url origin "git@github.com:${full_repo}.git"
+fi
+
+# Fetch all branches and commits from origin (workflow may have pushed files)
+echo "Fetching from origin..."
+git fetch origin --prune
+
+# Get the default branch name from remote
 DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
 if [ -z "$DEFAULT_BRANCH" ]; then
-  # Fallback: check for main or master
-  if git show-ref --verify --quiet refs/remotes/origin/main; then
+  # Try to detect default branch from remote
+  if git ls-remote --heads origin main | grep -q main; then
     DEFAULT_BRANCH="main"
-  elif git show-ref --verify --quiet refs/remotes/origin/master; then
+  elif git ls-remote --heads origin master | grep -q master; then
     DEFAULT_BRANCH="master"
   else
-    DEFAULT_BRANCH="main"
+    # Get the first branch from remote
+    DEFAULT_BRANCH=$(git ls-remote --heads origin | head -n 1 | sed 's@.*refs/heads/@@' || echo "main")
   fi
 fi
+
 echo "Default branch: ${DEFAULT_BRANCH}"
 
-# Make sure we're on the default branch first
-git checkout "${DEFAULT_BRANCH}" 2>/dev/null || true
+# Check if we have any commits locally
+if ! git rev-parse --verify HEAD &> /dev/null; then
+  # Local repo is empty, checkout from origin
+  echo "Local repository is empty, checking out ${DEFAULT_BRANCH} from origin..."
+  if git ls-remote --heads origin "${DEFAULT_BRANCH}" | grep -q "${DEFAULT_BRANCH}"; then
+    git checkout -b "${DEFAULT_BRANCH}" "origin/${DEFAULT_BRANCH}" 2>/dev/null || \
+      git checkout "${DEFAULT_BRANCH}" 2>/dev/null || \
+      git checkout -b "${DEFAULT_BRANCH}" "origin/${DEFAULT_BRANCH}"
+  else
+    echo "⚠️  Default branch ${DEFAULT_BRANCH} not found on remote yet."
+    echo "   Repository may still be empty. Waiting a moment..."
+    sleep 3
+    git fetch origin
+    if git ls-remote --heads origin "${DEFAULT_BRANCH}" | grep -q "${DEFAULT_BRANCH}"; then
+      git checkout -b "${DEFAULT_BRANCH}" "origin/${DEFAULT_BRANCH}"
+    else
+      echo "⚠️  Repository appears to be empty. Skipping stage branch creation."
+      echo "   You can create it manually later:"
+      echo "   cd ${clone_dir}"
+      echo "   git checkout -b stage"
+      echo "   git push -u origin stage"
+      cd - > /dev/null
+      exit 0
+    fi
+  fi
+else
+  # We have local commits, make sure we're on the right branch
+  CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+  if [ "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]; then
+    git checkout "${DEFAULT_BRANCH}" 2>/dev/null || \
+      git checkout -b "${DEFAULT_BRANCH}" "origin/${DEFAULT_BRANCH}" 2>/dev/null || true
+  fi
+  # Pull latest changes
+  git pull origin "${DEFAULT_BRANCH}" 2>/dev/null || true
+fi
 
 # Check if stage branch exists remotely
 if git ls-remote --heads origin stage | grep -q stage; then
   echo "Stage branch exists remotely, fetching and checking out..."
   git fetch origin stage
-  git checkout -B stage origin/stage
+  git checkout -B stage origin/stage 2>/dev/null || git checkout -b stage origin/stage
 else
   echo "Creating stage branch from ${DEFAULT_BRANCH}..."
   # Delete local stage if it exists (might be stale)
   git branch -D stage 2>/dev/null || true
-  # Create fresh stage branch from default branch
-  git checkout -b stage "${DEFAULT_BRANCH}"
+  # Create fresh stage branch from current branch (which should be default)
+  git checkout -b stage "${DEFAULT_BRANCH}" 2>/dev/null || git checkout -b stage
 fi
 
 # Push to trigger workflows
 echo "Pushing to origin stage..."
-if ! git push -u origin stage; then
-  echo "First push attempt failed, trying force push..."
-  git push -u origin stage --force
+if ! git push -u origin stage 2>&1; then
+  echo "⚠️  Push failed. This might be because:"
+  echo "   1. The repository is still being populated"
+  echo "   2. Authentication issues"
+  echo ""
+  echo "   You can try manually:"
+  echo "   cd ${clone_dir}"
+  echo "   git push -u origin stage"
 fi
 
 echo ""
