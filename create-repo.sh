@@ -24,7 +24,7 @@ echo ""
 if ! command -v git &> /dev/null; then
   echo "❌ Git is not installed."
   echo ""
-  
+
   # Detect OS and install git
   if [[ "$OSTYPE" == "darwin"* ]]; then
     echo "Detected macOS. Installing git via Homebrew..."
@@ -48,12 +48,24 @@ if ! command -v git &> /dev/null; then
       echo "❌ Could not detect package manager. Please install git manually."
       exit 1
     fi
+  elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "mingw"* ]] || [[ "$OSTYPE" == "cygwin" ]]; then
+    echo "Detected Windows (Git Bash/MSYS/Cygwin)."
+    echo ""
+    echo "⚠️  You're running this script in a bash environment, but git is not available."
+    echo "   This is unusual since Git Bash typically includes git."
+    echo ""
+    echo "   Please install Git for Windows from:"
+    echo "   https://git-scm.com/download/win"
+    echo ""
+    echo "   Or install via winget:"
+    echo "   winget install --id Git.Git -e --source winget"
+    exit 1
   else
     echo "❌ Unsupported OS. Please install git manually:"
     echo "   https://git-scm.com/downloads"
     exit 1
   fi
-  
+
   echo ""
   echo "✓ Git installed successfully"
 else
@@ -65,7 +77,7 @@ if ! command -v gh &> /dev/null; then
   echo ""
   echo "❌ GitHub CLI (gh) is not installed."
   echo ""
-  
+
   # Detect OS and install gh
   if [[ "$OSTYPE" == "darwin"* ]]; then
     echo "Detected macOS. Installing gh via Homebrew..."
@@ -90,12 +102,66 @@ if ! command -v gh &> /dev/null; then
       echo "   https://cli.github.com/manual/installation"
       exit 1
     fi
+  elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "mingw"* ]] || [[ "$OSTYPE" == "cygwin" ]]; then
+    echo "Detected Windows (Git Bash/MSYS/Cygwin)."
+    echo ""
+
+    # Try winget first (Windows Package Manager - built into Windows 10/11)
+    if command -v winget &> /dev/null; then
+      echo "Installing gh via winget..."
+      winget install --id GitHub.cli -e --source winget
+
+      # winget installs to a location that may not be in the current PATH
+      echo ""
+      echo "✓ GitHub CLI installed via winget"
+      echo ""
+      echo "⚠️  You may need to restart your terminal for 'gh' to be available in PATH."
+      echo "   After restarting, run this script again."
+      exit 0
+    # Try chocolatey
+    elif command -v choco &> /dev/null; then
+      echo "Installing gh via Chocolatey..."
+      choco install gh -y
+
+      echo ""
+      echo "✓ GitHub CLI installed via Chocolatey"
+      echo ""
+      echo "⚠️  You may need to restart your terminal for 'gh' to be available in PATH."
+      echo "   After restarting, run this script again."
+      exit 0
+    # Try scoop
+    elif command -v scoop &> /dev/null; then
+      echo "Installing gh via Scoop..."
+      scoop install gh
+
+      echo ""
+      echo "✓ GitHub CLI installed via Scoop"
+    else
+      echo "No supported package manager found (winget, chocolatey, or scoop)."
+      echo ""
+      echo "Please install GitHub CLI manually using one of these methods:"
+      echo ""
+      echo "  Option 1 - winget (recommended, built into Windows 10/11):"
+      echo "    winget install --id GitHub.cli -e --source winget"
+      echo ""
+      echo "  Option 2 - Download installer:"
+      echo "    https://cli.github.com"
+      echo ""
+      echo "  Option 3 - Install Chocolatey first, then gh:"
+      echo "    https://chocolatey.org/install"
+      echo "    choco install gh"
+      echo ""
+      echo "  Option 4 - Install Scoop first, then gh:"
+      echo "    https://scoop.sh"
+      echo "    scoop install gh"
+      exit 1
+    fi
   else
     echo "❌ Unsupported OS. Please install gh manually:"
     echo "   https://cli.github.com/manual/installation"
     exit 1
   fi
-  
+
   echo ""
   echo "✓ GitHub CLI installed successfully"
 else
@@ -399,11 +465,12 @@ if [ -d "${clone_dir}" ]; then
 fi
 
 if [ "$skip_clone" = false ]; then
-  echo "Running: git clone git@github.com:${full_repo}.git ${clone_dir}"
+  echo "Running: gh repo clone ${full_repo} ${clone_dir}"
   echo ""
-  
-  git clone "git@github.com:${full_repo}.git" "${clone_dir}"
-  
+
+  # Use gh repo clone which respects gh auth login credentials
+  gh repo clone "${full_repo}" "${clone_dir}"
+
   echo ""
   echo "✓ Repository cloned to ${clone_dir}"
 else
@@ -432,11 +499,27 @@ if [ "$REQUIRES_SELF_HOSTED" = true ]; then
   echo ""
   echo "⚠️  Workflows require self-hosted runners"
   echo ""
-  
+
   # Check if organization has self-hosted runners
-  ORG_RUNNERS=$(gh api "orgs/${GITHUB_ORG}/actions/runners" --jq '.runners | length' 2>/dev/null || echo "0")
-  REPO_RUNNERS=$(gh api "repos/${full_repo}/actions/runners" --jq '.runners | length' 2>/dev/null || echo "0")
-  
+  # Handle API errors gracefully (user may not have org admin permissions)
+  ORG_RUNNERS="unknown"
+  if ORG_RUNNERS_RESPONSE=$(gh api "orgs/${GITHUB_ORG}/actions/runners" 2>&1); then
+    if echo "$ORG_RUNNERS_RESPONSE" | grep -q '"total_count"'; then
+      # Extract total_count using grep and sed (works without jq)
+      ORG_RUNNERS=$(echo "$ORG_RUNNERS_RESPONSE" | grep -o '"total_count":[0-9]*' | head -1 | sed 's/"total_count"://')
+      ORG_RUNNERS=${ORG_RUNNERS:-0}
+    fi
+  fi
+
+  REPO_RUNNERS="unknown"
+  if REPO_RUNNERS_RESPONSE=$(gh api "repos/${full_repo}/actions/runners" 2>&1); then
+    if echo "$REPO_RUNNERS_RESPONSE" | grep -q '"total_count"'; then
+      REPO_RUNNERS=$(echo "$REPO_RUNNERS_RESPONSE" | grep -o '"total_count":[0-9]*' | head -1 | sed 's/"total_count"://')
+      REPO_RUNNERS=${REPO_RUNNERS:-0}
+    fi
+  fi
+
+  # Only show "no runners" warning if we confirmed both have 0 (not unknown)
   if [ "$ORG_RUNNERS" = "0" ] && [ "$REPO_RUNNERS" = "0" ]; then
     echo "❌ No self-hosted runners found for organization '${GITHUB_ORG}' or repository '${full_repo}'"
     echo ""
@@ -459,42 +542,28 @@ if [ "$REQUIRES_SELF_HOSTED" = true ]; then
       exit 0
     fi
   else
-    if [ "$ORG_RUNNERS" != "0" ]; then
+    if [ "$ORG_RUNNERS" = "unknown" ]; then
+      echo "  ℹ️  Cannot check organization runners (requires org admin permissions)"
+    elif [ "$ORG_RUNNERS" != "0" ]; then
       echo "✓ Found ${ORG_RUNNERS} organization-level runner(s)"
     fi
-    if [ "$REPO_RUNNERS" != "0" ]; then
+    if [ "$REPO_RUNNERS" = "unknown" ]; then
+      echo "  ℹ️  Cannot check repository runners (insufficient permissions)"
+    elif [ "$REPO_RUNNERS" != "0" ]; then
       echo "✓ Found ${REPO_RUNNERS} repository-level runner(s)"
+    fi
+
+    # If we couldn't check either, assume runners exist at org level
+    if [ "$ORG_RUNNERS" = "unknown" ] || [ "$REPO_RUNNERS" = "unknown" ]; then
+      echo ""
+      echo "  Assuming self-hosted runners are configured at the organization level."
+      echo "  If workflows get stuck, check runner availability."
     fi
   fi
 else
   echo "✓ Workflows use GitHub-hosted runners (no self-hosted runners required)"
 fi
 
-# Push to stage branch to trigger workflows
-echo ""
-echo "Pushing to stage branch to trigger workflows..."
-
-# Check if stage branch exists remotely
-if git ls-remote --heads origin stage | grep -q stage; then
-  echo "Stage branch exists, checking it out..."
-  git fetch origin stage
-  git checkout stage 2>/dev/null || git checkout -b stage origin/stage
-else
-  echo "Creating and pushing stage branch..."
-  git checkout -b stage 2>/dev/null || git checkout stage
-fi
-
-# Push to trigger workflows
-echo "Pushing to origin stage..."
-git push -u origin stage || git push origin stage
-
-echo ""
-echo "✓ Pushed to stage branch"
-if [ "$REQUIRES_SELF_HOSTED" = true ]; then
-  echo ""
-  echo "Note: Workflows require self-hosted runners. If workflows get stuck,"
-  echo "      ensure runners are running and have the correct labels."
-fi
 cd - > /dev/null
 
 echo ""
@@ -702,7 +771,61 @@ fi
 
 echo ""
 echo "=============================================="
-echo "Step 6: Opening repository in editor"
+echo "Step 6: Pushing to stage branch to trigger CI/CD"
+echo "=============================================="
+
+cd "${clone_dir}"
+
+# Get the default branch name
+DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+if [ -z "$DEFAULT_BRANCH" ]; then
+  # Fallback: check for main or master
+  if git show-ref --verify --quiet refs/remotes/origin/main; then
+    DEFAULT_BRANCH="main"
+  elif git show-ref --verify --quiet refs/remotes/origin/master; then
+    DEFAULT_BRANCH="master"
+  else
+    DEFAULT_BRANCH="main"
+  fi
+fi
+echo "Default branch: ${DEFAULT_BRANCH}"
+
+# Make sure we're on the default branch first
+git checkout "${DEFAULT_BRANCH}" 2>/dev/null || true
+
+# Check if stage branch exists remotely
+if git ls-remote --heads origin stage | grep -q stage; then
+  echo "Stage branch exists remotely, fetching and checking out..."
+  git fetch origin stage
+  git checkout -B stage origin/stage
+else
+  echo "Creating stage branch from ${DEFAULT_BRANCH}..."
+  # Delete local stage if it exists (might be stale)
+  git branch -D stage 2>/dev/null || true
+  # Create fresh stage branch from default branch
+  git checkout -b stage "${DEFAULT_BRANCH}"
+fi
+
+# Push to trigger workflows
+echo "Pushing to origin stage..."
+if ! git push -u origin stage; then
+  echo "First push attempt failed, trying force push..."
+  git push -u origin stage --force
+fi
+
+echo ""
+echo "✓ Pushed to stage branch - CI/CD workflow triggered"
+if [ "$REQUIRES_SELF_HOSTED" = true ]; then
+  echo ""
+  echo "Note: CI/CD workflows require self-hosted runners. If workflows get stuck,"
+  echo "      ensure runners are running and have the correct labels."
+fi
+
+cd - > /dev/null
+
+echo ""
+echo "=============================================="
+echo "Step 7: Opening repository in editor"
 echo "=============================================="
 
 # Use the preferred editor we detected/installed earlier, or try to find one
