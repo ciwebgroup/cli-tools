@@ -14,26 +14,63 @@ echo "=============================================="
 echo ""
 
 # ===========================================
+# Helper Functions
+# ===========================================
+
+# Detect OS type and set OS_TYPE variable
+detect_os() {
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    OS_TYPE="macos"
+  elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    OS_TYPE="linux"
+  elif [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ "$OSTYPE" == "mingw"* ]]; then
+    OS_TYPE="windows"
+  elif [[ -n "$WINDIR" ]] || [[ -n "$windir" ]]; then
+    # Fallback detection for Windows
+    OS_TYPE="windows"
+  else
+    OS_TYPE="unknown"
+  fi
+}
+
+# Check if a process is running (cross-platform)
+is_process_running() {
+  local process_name="$1"
+  if [[ "$OS_TYPE" == "windows" ]]; then
+    # Use tasklist on Windows
+    tasklist 2>/dev/null | grep -qi "$process_name" 2>/dev/null
+  else
+    # Use pgrep on Unix-like systems
+    pgrep -x "$process_name" &> /dev/null
+  fi
+}
+
+# Detect OS at startup
+detect_os
+
+# ===========================================
 # Prerequisites Check
 # ===========================================
 
 echo "Checking prerequisites..."
+echo ""
+echo "Detected OS: ${OS_TYPE}"
 echo ""
 
 # Check if git is installed
 if ! command -v git &> /dev/null; then
   echo "❌ Git is not installed."
   echo ""
-
+  
   # Detect OS and install git
-  if [[ "$OSTYPE" == "darwin"* ]]; then
+  if [[ "$OS_TYPE" == "macos" ]]; then
     echo "Detected macOS. Installing git via Homebrew..."
     if ! command -v brew &> /dev/null; then
       echo "Homebrew not found. Installing Homebrew first..."
       /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     fi
     brew install git
-  elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+  elif [[ "$OS_TYPE" == "linux" ]]; then
     echo "Detected Linux."
     if command -v apt-get &> /dev/null; then
       echo "Installing git via apt..."
@@ -48,24 +85,28 @@ if ! command -v git &> /dev/null; then
       echo "❌ Could not detect package manager. Please install git manually."
       exit 1
     fi
-  elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "mingw"* ]] || [[ "$OSTYPE" == "cygwin" ]]; then
-    echo "Detected Windows (Git Bash/MSYS/Cygwin)."
-    echo ""
-    echo "⚠️  You're running this script in a bash environment, but git is not available."
-    echo "   This is unusual since Git Bash typically includes git."
-    echo ""
-    echo "   Please install Git for Windows from:"
-    echo "   https://git-scm.com/download/win"
-    echo ""
-    echo "   Or install via winget:"
-    echo "   winget install --id Git.Git -e --source winget"
-    exit 1
+  elif [[ "$OS_TYPE" == "windows" ]]; then
+    echo "Detected Windows."
+    if command -v winget &> /dev/null; then
+      echo "Installing git via winget..."
+      winget install --id Git.Git -e --source winget
+    elif command -v choco &> /dev/null; then
+      echo "Installing git via Chocolatey..."
+      choco install git -y
+    elif command -v scoop &> /dev/null; then
+      echo "Installing git via Scoop..."
+      scoop install git
+    else
+      echo "❌ No package manager found (winget, choco, scoop)."
+      echo "   Please install git manually: https://git-scm.com/downloads"
+      exit 1
+    fi
   else
     echo "❌ Unsupported OS. Please install git manually:"
     echo "   https://git-scm.com/downloads"
     exit 1
   fi
-
+  
   echo ""
   echo "✓ Git installed successfully"
 else
@@ -77,16 +118,16 @@ if ! command -v gh &> /dev/null; then
   echo ""
   echo "❌ GitHub CLI (gh) is not installed."
   echo ""
-
+  
   # Detect OS and install gh
-  if [[ "$OSTYPE" == "darwin"* ]]; then
+  if [[ "$OS_TYPE" == "macos" ]]; then
     echo "Detected macOS. Installing gh via Homebrew..."
     if ! command -v brew &> /dev/null; then
       echo "Homebrew not found. Installing Homebrew first..."
       /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     fi
     brew install gh
-  elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+  elif [[ "$OS_TYPE" == "linux" ]]; then
     echo "Detected Linux. Installing gh..."
     if command -v apt-get &> /dev/null; then
       # Add GitHub CLI repository
@@ -102,58 +143,20 @@ if ! command -v gh &> /dev/null; then
       echo "   https://cli.github.com/manual/installation"
       exit 1
     fi
-  elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "mingw"* ]] || [[ "$OSTYPE" == "cygwin" ]]; then
-    echo "Detected Windows (Git Bash/MSYS/Cygwin)."
-    echo ""
-
-    # Try winget first (Windows Package Manager - built into Windows 10/11)
+  elif [[ "$OS_TYPE" == "windows" ]]; then
+    echo "Detected Windows. Installing gh..."
     if command -v winget &> /dev/null; then
       echo "Installing gh via winget..."
       winget install --id GitHub.cli -e --source winget
-
-      # winget installs to a location that may not be in the current PATH
-      echo ""
-      echo "✓ GitHub CLI installed via winget"
-      echo ""
-      echo "⚠️  You may need to restart your terminal for 'gh' to be available in PATH."
-      echo "   After restarting, run this script again."
-      exit 0
-    # Try chocolatey
     elif command -v choco &> /dev/null; then
       echo "Installing gh via Chocolatey..."
       choco install gh -y
-
-      echo ""
-      echo "✓ GitHub CLI installed via Chocolatey"
-      echo ""
-      echo "⚠️  You may need to restart your terminal for 'gh' to be available in PATH."
-      echo "   After restarting, run this script again."
-      exit 0
-    # Try scoop
     elif command -v scoop &> /dev/null; then
       echo "Installing gh via Scoop..."
       scoop install gh
-
-      echo ""
-      echo "✓ GitHub CLI installed via Scoop"
     else
-      echo "No supported package manager found (winget, chocolatey, or scoop)."
-      echo ""
-      echo "Please install GitHub CLI manually using one of these methods:"
-      echo ""
-      echo "  Option 1 - winget (recommended, built into Windows 10/11):"
-      echo "    winget install --id GitHub.cli -e --source winget"
-      echo ""
-      echo "  Option 2 - Download installer:"
-      echo "    https://cli.github.com"
-      echo ""
-      echo "  Option 3 - Install Chocolatey first, then gh:"
-      echo "    https://chocolatey.org/install"
-      echo "    choco install gh"
-      echo ""
-      echo "  Option 4 - Install Scoop first, then gh:"
-      echo "    https://scoop.sh"
-      echo "    scoop install gh"
+      echo "❌ No package manager found (winget, choco, scoop)."
+      echo "   Please install gh manually: https://cli.github.com/manual/installation"
       exit 1
     fi
   else
@@ -161,7 +164,7 @@ if ! command -v gh &> /dev/null; then
     echo "   https://cli.github.com/manual/installation"
     exit 1
   fi
-
+  
   echo ""
   echo "✓ GitHub CLI installed successfully"
 else
@@ -181,11 +184,11 @@ if command -v cursor &> /dev/null; then
 elif command -v code &> /dev/null; then
   PREFERRED_EDITOR="code"
   echo "✓ VS Code is installed"
-elif [[ -n "$CURSOR_APP" ]] || pgrep -x "Cursor" &> /dev/null || [[ "$TERM_PROGRAM" == "vscode" ]]; then
+elif [[ -n "$CURSOR_APP" ]] || is_process_running "Cursor" || [[ "$TERM_PROGRAM" == "vscode" ]]; then
   # User is likely using Cursor but command not in PATH
   PREFERRED_EDITOR="cursor"
   echo "⚠️  Cursor detected but 'cursor' command not in PATH"
-elif [[ "$TERM_PROGRAM" == "vscode" ]] || pgrep -x "Code" &> /dev/null; then
+elif [[ "$TERM_PROGRAM" == "vscode" ]] || is_process_running "Code"; then
   # User is likely using VS Code but command not in PATH
   PREFERRED_EDITOR="code"
   echo "⚠️  VS Code detected but 'code' command not in PATH"
@@ -198,7 +201,7 @@ if [ -z "$PREFERRED_EDITOR" ]; then
   
   # Try to detect which one to install
   # Default to cursor if we can't determine, but ask user
-  if [[ "$OSTYPE" == "darwin"* ]]; then
+  if [[ "$OS_TYPE" == "macos" ]]; then
     echo "Detected macOS."
     echo ""
     read -p "Install Cursor? (Y/n): " install_cursor
@@ -238,7 +241,7 @@ if [ -z "$PREFERRED_EDITOR" ]; then
         echo "⚠️  No editor will be installed. You can open the repository manually."
       fi
     fi
-  elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+  elif [[ "$OS_TYPE" == "linux" ]]; then
     echo "Detected Linux."
     echo ""
     read -p "Install Cursor? (Y/n): " install_cursor
@@ -326,6 +329,68 @@ if [ -z "$PREFERRED_EDITOR" ]; then
         echo "⚠️  No editor will be installed. You can open the repository manually."
       fi
     fi
+  elif [[ "$OS_TYPE" == "windows" ]]; then
+    echo "Detected Windows."
+    echo ""
+    read -p "Install Cursor? (Y/n): " install_cursor
+    
+    if [[ ! "$install_cursor" =~ ^[Nn]$ ]]; then
+      PREFERRED_EDITOR="cursor"
+      echo ""
+      echo "Installing Cursor..."
+      
+      if command -v winget &> /dev/null; then
+        winget install --id Anysphere.Cursor -e --source winget
+        echo ""
+        echo "✓ Cursor installed successfully"
+        echo "   Note: You may need to restart your terminal for the 'cursor' command to be available."
+      elif command -v choco &> /dev/null; then
+        choco install cursor -y
+        echo ""
+        echo "✓ Cursor installed successfully"
+      elif command -v scoop &> /dev/null; then
+        scoop bucket add extras 2>/dev/null || true
+        scoop install cursor
+        echo ""
+        echo "✓ Cursor installed successfully"
+      else
+        echo "⚠️  No package manager found (winget, choco, scoop)."
+        echo "   Please download and install Cursor manually from: https://cursor.sh"
+        PREFERRED_EDITOR=""
+      fi
+    else
+      echo ""
+      read -p "Install VS Code? (Y/n): " install_code
+      
+      if [[ ! "$install_code" =~ ^[Nn]$ ]]; then
+        PREFERRED_EDITOR="code"
+        echo ""
+        echo "Installing VS Code..."
+        
+        if command -v winget &> /dev/null; then
+          winget install --id Microsoft.VisualStudioCode -e --source winget
+          echo ""
+          echo "✓ VS Code installed successfully"
+          echo "   Note: You may need to restart your terminal for the 'code' command to be available."
+        elif command -v choco &> /dev/null; then
+          choco install vscode -y
+          echo ""
+          echo "✓ VS Code installed successfully"
+        elif command -v scoop &> /dev/null; then
+          scoop bucket add extras 2>/dev/null || true
+          scoop install vscode
+          echo ""
+          echo "✓ VS Code installed successfully"
+        else
+          echo "⚠️  No package manager found (winget, choco, scoop)."
+          echo "   Please download and install VS Code manually from: https://code.visualstudio.com/download"
+          PREFERRED_EDITOR=""
+        fi
+      else
+        echo ""
+        echo "⚠️  No editor will be installed. You can open the repository manually."
+      fi
+    fi
   else
     echo "⚠️  Unsupported OS. Please install an editor manually:"
     echo "   Cursor: https://cursor.sh"
@@ -333,25 +398,73 @@ if [ -z "$PREFERRED_EDITOR" ]; then
   fi
 fi
 
-# Check if gh is authenticated
+# Check if gh is authenticated (works with both GITHUB_TOKEN and gh auth login)
 echo ""
 echo "Checking GitHub authentication..."
 
-if ! gh auth status &> /dev/null; then
-  echo ""
-  echo "⚠️  You are not logged in to GitHub CLI."
-  echo ""
-  echo "Please authenticate with GitHub to continue."
-  echo "This will open a browser window for authentication."
-  echo ""
-  read -p "Press Enter to start authentication..."
-  
-  gh auth login
-  
-  echo ""
-  echo "✓ GitHub authentication complete"
+# Try to get the authenticated user - this works regardless of auth method
+if GH_USER=$(gh api user --jq '.login' 2>/dev/null); then
+  if [ -n "$GITHUB_TOKEN" ]; then
+    echo "✓ Authenticated via GITHUB_TOKEN (as ${GH_USER})"
+  else
+    echo "✓ Authenticated to GitHub (as ${GH_USER})"
+  fi
 else
-  echo "✓ Authenticated to GitHub"
+  # Check if GITHUB_TOKEN is set but invalid
+  if [ -n "$GITHUB_TOKEN" ]; then
+    echo "⚠️  GITHUB_TOKEN is set but invalid. Checking for stored credentials..."
+    
+    # Temporarily unset to check if stored credentials work
+    SAVED_TOKEN="$GITHUB_TOKEN"
+    unset GITHUB_TOKEN
+    
+    # Check if stored credentials work
+    if GH_USER=$(gh api user --jq '.login' 2>/dev/null); then
+      echo "✓ Using stored credentials (as ${GH_USER})"
+      echo ""
+      echo "💡 Tip: Run 'unset GITHUB_TOKEN' or open a new terminal to avoid this message."
+      echo "   Also remove GITHUB_TOKEN from ~/.zshrc or ~/.bashrc"
+      # Keep GITHUB_TOKEN unset for the rest of the script
+    else
+      # No valid stored credentials, need to login
+      echo ""
+      echo "No valid stored credentials found."
+      echo "Please authenticate with GitHub to continue."
+      echo ""
+      read -p "Press Enter to start authentication..."
+      
+      gh auth login
+      
+      # Verify authentication worked
+      if GH_USER=$(gh api user --jq '.login' 2>/dev/null); then
+        echo ""
+        echo "✓ GitHub authentication complete (as ${GH_USER})"
+      else
+        echo ""
+        echo "❌ Authentication failed. Please try again."
+        exit 1
+      fi
+    fi
+  else
+    echo ""
+    echo "⚠️  Not authenticated to GitHub."
+    echo ""
+    echo "Please authenticate with GitHub to continue."
+    echo ""
+    read -p "Press Enter to start authentication..."
+    
+    gh auth login
+    
+    # Verify authentication worked
+    if GH_USER=$(gh api user --jq '.login' 2>/dev/null); then
+      echo ""
+      echo "✓ GitHub authentication complete (as ${GH_USER})"
+    else
+      echo ""
+      echo "❌ Authentication failed. Please try again."
+      exit 1
+    fi
+  fi
 fi
 
 echo ""
@@ -465,22 +578,73 @@ if [ -d "${clone_dir}" ]; then
 fi
 
 if [ "$skip_clone" = false ]; then
-  echo "Running: gh repo clone ${full_repo} ${clone_dir}"
+  echo "Running: git clone git@github.com:${full_repo}.git ${clone_dir}"
   echo ""
-
-  # Use gh repo clone which respects gh auth login credentials
-  gh repo clone "${full_repo}" "${clone_dir}"
-
+  
+  git clone "git@github.com:${full_repo}.git" "${clone_dir}"
+  
   echo ""
   echo "✓ Repository cloned to ${clone_dir}"
 else
   echo "✓ Using existing directory: ${clone_dir}"
 fi
 
-# Check workflow requirements before pushing
+# Enter clone directory and wait for template files
 echo ""
 echo "Checking workflow runner requirements..."
 cd "${clone_dir}"
+
+# Wait for template files to be populated (GitHub needs time to copy from template)
+echo "Waiting for template files to be available..."
+max_template_wait=24
+template_wait=0
+while [ $template_wait -lt $max_template_wait ]; do
+  # Try to fetch and check if main branch exists
+  git fetch origin 2>/dev/null
+  
+  # Check if we have a default branch (main or master)
+  DEFAULT_BRANCH=$(git remote show origin 2>/dev/null | grep "HEAD branch" | sed 's/.*: //')
+  
+  if [ -n "$DEFAULT_BRANCH" ] && [ "$DEFAULT_BRANCH" != "(unknown)" ]; then
+    # Fetch to make sure we have the actual content
+    git fetch origin "$DEFAULT_BRANCH" 2>/dev/null
+    
+    # Verify the branch actually has content (not just exists)
+    if git rev-parse "origin/${DEFAULT_BRANCH}" &>/dev/null; then
+      echo "✓ Template files available (default branch: ${DEFAULT_BRANCH})"
+      break
+    fi
+  fi
+  
+  if [ $template_wait -eq 0 ]; then
+    echo "⚠️  Repository appears empty. Waiting for template files to populate..."
+  fi
+  
+  sleep 5
+  template_wait=$((template_wait + 1))
+  
+  if [ $((template_wait % 4)) -eq 0 ]; then
+    echo "  Still waiting... (${template_wait}/${max_template_wait})"
+  fi
+done
+
+if [ -z "$DEFAULT_BRANCH" ] || [ "$DEFAULT_BRANCH" = "(unknown)" ]; then
+  echo "❌ Template files did not populate in time."
+  echo "   Please check the repository manually: https://github.com/${full_repo}"
+  cd - > /dev/null
+  exit 1
+fi
+
+# Verify we actually have the remote branch content
+if ! git rev-parse "origin/${DEFAULT_BRANCH}" &>/dev/null; then
+  echo "❌ Could not fetch branch content. Please check the repository manually."
+  cd - > /dev/null
+  exit 1
+fi
+
+# Checkout the default branch
+echo "Checking out ${DEFAULT_BRANCH} branch..."
+git checkout -B "$DEFAULT_BRANCH" "origin/${DEFAULT_BRANCH}"
 
 # Check if workflows require self-hosted runners
 REQUIRES_SELF_HOSTED=false
@@ -499,27 +663,11 @@ if [ "$REQUIRES_SELF_HOSTED" = true ]; then
   echo ""
   echo "⚠️  Workflows require self-hosted runners"
   echo ""
-
+  
   # Check if organization has self-hosted runners
-  # Handle API errors gracefully (user may not have org admin permissions)
-  ORG_RUNNERS="unknown"
-  if ORG_RUNNERS_RESPONSE=$(gh api "orgs/${GITHUB_ORG}/actions/runners" 2>&1); then
-    if echo "$ORG_RUNNERS_RESPONSE" | grep -q '"total_count"'; then
-      # Extract total_count using grep and sed (works without jq)
-      ORG_RUNNERS=$(echo "$ORG_RUNNERS_RESPONSE" | grep -o '"total_count":[0-9]*' | head -1 | sed 's/"total_count"://')
-      ORG_RUNNERS=${ORG_RUNNERS:-0}
-    fi
-  fi
-
-  REPO_RUNNERS="unknown"
-  if REPO_RUNNERS_RESPONSE=$(gh api "repos/${full_repo}/actions/runners" 2>&1); then
-    if echo "$REPO_RUNNERS_RESPONSE" | grep -q '"total_count"'; then
-      REPO_RUNNERS=$(echo "$REPO_RUNNERS_RESPONSE" | grep -o '"total_count":[0-9]*' | head -1 | sed 's/"total_count"://')
-      REPO_RUNNERS=${REPO_RUNNERS:-0}
-    fi
-  fi
-
-  # Only show "no runners" warning if we confirmed both have 0 (not unknown)
+  ORG_RUNNERS=$(gh api "orgs/${GITHUB_ORG}/actions/runners" --jq '.runners | length' 2>/dev/null || echo "0")
+  REPO_RUNNERS=$(gh api "repos/${full_repo}/actions/runners" --jq '.runners | length' 2>/dev/null || echo "0")
+  
   if [ "$ORG_RUNNERS" = "0" ] && [ "$REPO_RUNNERS" = "0" ]; then
     echo "❌ No self-hosted runners found for organization '${GITHUB_ORG}' or repository '${full_repo}'"
     echo ""
@@ -542,28 +690,18 @@ if [ "$REQUIRES_SELF_HOSTED" = true ]; then
       exit 0
     fi
   else
-    if [ "$ORG_RUNNERS" = "unknown" ]; then
-      echo "  ℹ️  Cannot check organization runners (requires org admin permissions)"
-    elif [ "$ORG_RUNNERS" != "0" ]; then
+    if [ "$ORG_RUNNERS" != "0" ]; then
       echo "✓ Found ${ORG_RUNNERS} organization-level runner(s)"
     fi
-    if [ "$REPO_RUNNERS" = "unknown" ]; then
-      echo "  ℹ️  Cannot check repository runners (insufficient permissions)"
-    elif [ "$REPO_RUNNERS" != "0" ]; then
+    if [ "$REPO_RUNNERS" != "0" ]; then
       echo "✓ Found ${REPO_RUNNERS} repository-level runner(s)"
-    fi
-
-    # If we couldn't check either, assume runners exist at org level
-    if [ "$ORG_RUNNERS" = "unknown" ] || [ "$REPO_RUNNERS" = "unknown" ]; then
-      echo ""
-      echo "  Assuming self-hosted runners are configured at the organization level."
-      echo "  If workflows get stuck, check runner availability."
     fi
   fi
 else
   echo "✓ Workflows use GitHub-hosted runners (no self-hosted runners required)"
 fi
 
+# Return to original directory for now
 cd - > /dev/null
 
 echo ""
@@ -662,8 +800,10 @@ if [ -n "$WORKFLOW_RUN_ID" ] && [ "$WORKFLOW_RUN_ID" != "null" ]; then
   stuck_warning_shown=false
   
   while [ $wait_count -lt $max_wait ]; do
-    # Get workflow status using gh's built-in jq (works without standalone jq)
-    CURRENT_STATUS=$(gh run view "${WORKFLOW_RUN_ID}" --repo "${full_repo}" --json status --jq '.status' 2>/dev/null)
+    # Get detailed status including jobs
+    STATUS=$(gh run view "${WORKFLOW_RUN_ID}" --repo "${full_repo}" --json status,conclusion,jobs --jq '{status: .status, conclusion: .conclusion, jobs: [.jobs[]? | {name: .name, status: .status, conclusion: .conclusion}]}' 2>/dev/null)
+    
+    CURRENT_STATUS=$(echo "$STATUS" | jq -r '.status' 2>/dev/null)
     
     # Check if workflow is stuck waiting for a runner
     if [ "$CURRENT_STATUS" = "queued" ] || [ "$CURRENT_STATUS" = "in_progress" ]; then
@@ -705,7 +845,7 @@ if [ -n "$WORKFLOW_RUN_ID" ] && [ "$WORKFLOW_RUN_ID" != "null" ]; then
     fi
     
     if [ "$CURRENT_STATUS" = "completed" ]; then
-      CONCLUSION=$(gh run view "${WORKFLOW_RUN_ID}" --repo "${full_repo}" --json conclusion --jq '.conclusion' 2>/dev/null)
+      CONCLUSION=$(echo "$STATUS" | jq -r '.conclusion' 2>/dev/null)
       echo ""
       echo "✓ Workflow completed with status: ${CONCLUSION}"
       break
@@ -769,107 +909,64 @@ fi
 
 echo ""
 echo "=============================================="
-echo "Step 6: Pushing to stage branch to trigger CI/CD"
+echo "Step 6: Pushing to stage branch to trigger deploy"
 echo "=============================================="
 
+# Enter the clone directory
 cd "${clone_dir}"
 
-# First, ensure remote is set correctly
-if ! git remote get-url origin &> /dev/null; then
-  echo "Setting remote origin..."
-  git remote add origin "git@github.com:${full_repo}.git" 2>/dev/null || \
-    git remote set-url origin "git@github.com:${full_repo}.git"
+# Ensure we're using SSH remote (gh clone sometimes uses HTTPS)
+CURRENT_REMOTE=$(git remote get-url origin 2>/dev/null)
+if [[ "$CURRENT_REMOTE" == https://* ]]; then
+  echo "Converting remote from HTTPS to SSH..."
+  git remote set-url origin "git@github.com:${full_repo}.git"
 fi
 
-# Fetch all branches and commits from origin (workflow may have pushed files)
-echo "Fetching from origin..."
-git fetch origin --prune
+# Fetch latest changes (init workflow may have pushed commits)
+echo "Fetching latest changes from origin..."
+git fetch origin
 
-# Get the default branch name from remote
-DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-if [ -z "$DEFAULT_BRANCH" ]; then
-  # Try to detect default branch from remote
-  if git ls-remote --heads origin main | grep -q main; then
-    DEFAULT_BRANCH="main"
-  elif git ls-remote --heads origin master | grep -q master; then
-    DEFAULT_BRANCH="master"
-  else
-    # Get the first branch from remote
-    DEFAULT_BRANCH=$(git ls-remote --heads origin | head -n 1 | sed 's@.*refs/heads/@@' || echo "main")
-  fi
-fi
-
+# Get the default branch name
+DEFAULT_BRANCH=$(git remote show origin 2>/dev/null | grep "HEAD branch" | sed 's/.*: //' || echo "main")
 echo "Default branch: ${DEFAULT_BRANCH}"
 
-# Check if we have any commits locally
-if ! git rev-parse --verify HEAD &> /dev/null; then
-  # Local repo is empty, checkout from origin
-  echo "Local repository is empty, checking out ${DEFAULT_BRANCH} from origin..."
-  if git ls-remote --heads origin "${DEFAULT_BRANCH}" | grep -q "${DEFAULT_BRANCH}"; then
-    git checkout -b "${DEFAULT_BRANCH}" "origin/${DEFAULT_BRANCH}" 2>/dev/null || \
-      git checkout "${DEFAULT_BRANCH}" 2>/dev/null || \
-      git checkout -b "${DEFAULT_BRANCH}" "origin/${DEFAULT_BRANCH}"
-  else
-    echo "⚠️  Default branch ${DEFAULT_BRANCH} not found on remote yet."
-    echo "   Repository may still be empty. Waiting a moment..."
-    sleep 3
-    git fetch origin
-    if git ls-remote --heads origin "${DEFAULT_BRANCH}" | grep -q "${DEFAULT_BRANCH}"; then
-      git checkout -b "${DEFAULT_BRANCH}" "origin/${DEFAULT_BRANCH}"
-    else
-      echo "⚠️  Repository appears to be empty. Skipping stage branch creation."
-      echo "   You can create it manually later:"
-      echo "   cd ${clone_dir}"
-      echo "   git checkout -b stage"
-      echo "   git push -u origin stage"
-      cd - > /dev/null
-      exit 0
-    fi
-  fi
-else
-  # We have local commits, make sure we're on the right branch
-  CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
-  if [ "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]; then
-    git checkout "${DEFAULT_BRANCH}" 2>/dev/null || \
-      git checkout -b "${DEFAULT_BRANCH}" "origin/${DEFAULT_BRANCH}" 2>/dev/null || true
-  fi
-  # Pull latest changes
-  git pull origin "${DEFAULT_BRANCH}" 2>/dev/null || true
-fi
+# Update local default branch with any changes from init workflow
+echo "Pulling changes from ${DEFAULT_BRANCH}..."
+git checkout "$DEFAULT_BRANCH" 2>/dev/null || git checkout -b "$DEFAULT_BRANCH" "origin/${DEFAULT_BRANCH}"
+git pull origin "$DEFAULT_BRANCH" --rebase 2>/dev/null || git reset --hard "origin/${DEFAULT_BRANCH}"
 
-# Check if stage branch exists remotely
+# Create or update stage branch
+echo "Setting up stage branch..."
 if git ls-remote --heads origin stage | grep -q stage; then
-  echo "Stage branch exists remotely, fetching and checking out..."
+  echo "Stage branch exists remotely, syncing..."
   git fetch origin stage
-  git checkout -B stage origin/stage 2>/dev/null || git checkout -b stage origin/stage
+  git checkout stage 2>/dev/null || git checkout -b stage origin/stage
+  # Reset stage to match the latest from default branch
+  git reset --hard "origin/${DEFAULT_BRANCH}"
 else
   echo "Creating stage branch from ${DEFAULT_BRANCH}..."
-  # Delete local stage if it exists (might be stale)
-  git branch -D stage 2>/dev/null || true
-  # Create fresh stage branch from current branch (which should be default)
-  git checkout -b stage "${DEFAULT_BRANCH}" 2>/dev/null || git checkout -b stage
+  git checkout -b stage 2>/dev/null || git checkout stage
+  git reset --hard "$DEFAULT_BRANCH"
 fi
 
-# Push to trigger workflows
+# Push to stage to trigger deploy workflow
 echo "Pushing to origin stage..."
-if ! git push -u origin stage 2>&1; then
-  echo "⚠️  Push failed. This might be because:"
-  echo "   1. The repository is still being populated"
-  echo "   2. Authentication issues"
+if git push -u origin stage --force-with-lease 2>/dev/null || git push -u origin stage -f; then
   echo ""
-  echo "   You can try manually:"
-  echo "   cd ${clone_dir}"
-  echo "   git push -u origin stage"
+  echo "✓ Pushed to stage branch"
+  
+  if [ "$REQUIRES_SELF_HOSTED" = true ]; then
+    echo ""
+    echo "Note: Workflows require self-hosted runners. If workflows get stuck,"
+    echo "      ensure runners are running and have the correct labels."
+  fi
+else
+  echo ""
+  echo "⚠️  Could not push to stage branch."
+  echo "   You may need to push manually: git push -u origin stage"
 fi
 
-echo ""
-echo "✓ Pushed to stage branch - CI/CD workflow triggered"
-if [ "$REQUIRES_SELF_HOSTED" = true ]; then
-  echo ""
-  echo "Note: CI/CD workflows require self-hosted runners. If workflows get stuck,"
-  echo "      ensure runners are running and have the correct labels."
-fi
-
+# Return to original directory
 cd - > /dev/null
 
 echo ""
@@ -890,10 +987,27 @@ elif command -v code &> /dev/null; then
   echo "Opening in VS Code..."
   code "${clone_dir}"
   echo "✓ Repository opened in VS Code"
-elif [[ "$OSTYPE" == "darwin"* ]]; then
+elif [[ "$OS_TYPE" == "macos" ]]; then
   echo "Opening in default application..."
   open "${clone_dir}"
   echo "✓ Repository opened"
+elif [[ "$OS_TYPE" == "windows" ]]; then
+  echo "Opening in Explorer..."
+  start "" "${clone_dir}" 2>/dev/null || explorer.exe "${clone_dir}" 2>/dev/null || {
+    echo "⚠️  Could not open directory. Please open manually:"
+    echo "   cd ${clone_dir}"
+  }
+  echo "✓ Repository opened"
+elif [[ "$OS_TYPE" == "linux" ]]; then
+  # Try common Linux file managers
+  if command -v xdg-open &> /dev/null; then
+    echo "Opening in file manager..."
+    xdg-open "${clone_dir}"
+    echo "✓ Repository opened"
+  else
+    echo "⚠️  Could not detect file manager. Please open manually:"
+    echo "   cd ${clone_dir}"
+  fi
 else
   echo "⚠️  Could not detect editor. Please open manually:"
   echo "   cd ${clone_dir}"
